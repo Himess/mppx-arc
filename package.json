@@ -1,0 +1,25 @@
+{
+  "name": "mppx-arc",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MPP (Machine Payments Protocol) payment method for Circle's Arc chain — USDC-native, charge + session support",
+  "author": "Himess",
+  "license": "MIT",
+  "workspaces": [
+    "packages/mpp",
+    "examples/server",
+    "examples/agent"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=packages/mpp",
+    "test": "npm run test --workspace=packages/mpp",
+    "test:contracts": "cd packages/contracts && forge test -vvv",
+    "deploy": "cd packages/contracts && forge script script/Deploy.s.sol --rpc-url $ARC_TESTNET_RPC --broadcast --verify",
+    "lint": "npm run lint --workspace=packages/mpp",
+    "example:server": "npm run dev --workspace=examples/server",
+    "example:agent": "npm run dev --workspace=examples/agent"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

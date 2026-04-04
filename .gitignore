@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+*.log
+
+# Foundry
+packages/contracts/out/
+packages/contracts/cache/
+packages/contracts/broadcast/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -1,0 +1,17 @@
+{
+  "name": "mppx-arc-agent-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx tsx index.ts"
+  },
+  "dependencies": {
+    "viem": "^2.27.0",
+    "@mppx-arc/mpp": "file:../../packages/mpp"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "@types/node": "^22.0.0"
+  }
+}

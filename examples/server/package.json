@@ -1,0 +1,19 @@
+{
+  "name": "mppx-arc-server-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx tsx index.ts"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "@hono/node-server": "^1.14.0",
+    "viem": "^2.27.0",
+    "@mppx-arc/mpp": "file:../../packages/mpp"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "@types/node": "^22.0.0"
+  }
+}

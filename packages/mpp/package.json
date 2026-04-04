@@ -1,0 +1,50 @@
+{
+  "name": "@mppx-arc/mpp",
+  "version": "1.0.0",
+  "description": "MPP payment method plugin for Circle's Arc chain — USDC-native charge + session support",
+  "author": "Himess",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./client": {
+      "import": "./dist/client/index.js",
+      "types": "./dist/client/index.d.ts"
+    },
+    "./server": {
+      "import": "./dist/server/index.js",
+      "types": "./dist/server/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "mppx": "^0.5.5",
+    "viem": "^2.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "mpp",
+    "mppx",
+    "arc",
+    "circle",
+    "usdc",
+    "payments",
+    "machine-payments",
+    "x402",
+    "agent-payments"
+  ]
+}
