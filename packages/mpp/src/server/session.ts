@@ -28,13 +28,13 @@ interface ServerChannelState {
   payee: Address;
   deposit: bigint;
   settled: bigint;
-  lastNonce: number;
+  lastNonce: bigint; // H5 FIX: use bigint instead of number
   lastCumulativeAmount: bigint;
-  /** Unsettled voucher amount (for auto-settle threshold) */
   pendingAmount: bigint;
 }
 
-const channelStore = new Map<string, ServerChannelState>();
+// H6 FIX: Export shared store so both standalone and plugin can use it
+export const channelStore = new Map<string, ServerChannelState>();
 
 // ─── Verify Session ──────────────────────────────────────────────────
 
@@ -46,16 +46,9 @@ export interface VerifySessionOptions {
   publicClient?: PublicClient;
   walletClient?: WalletClient<Transport, Chain, Account>;
   config?: ArcSessionConfig;
-  /** Auto-settle on-chain when pending exceeds this threshold */
   autoSettleThreshold?: bigint;
 }
 
-/**
- * Verify a session credential on Arc.
- *
- * Handles channel lifecycle: open, voucher, topUp, close.
- * Voucher verification is CPU-only (sub-ms) — no RPC calls.
- */
 export async function verifySession(options: VerifySessionOptions): Promise<SessionReceipt> {
   const { credential, expectedPayee, amountPerRequest, escrow, config } = options;
 
@@ -75,13 +68,11 @@ export async function verifySession(options: VerifySessionOptions): Promise<Sess
         expectedPayee,
         escrow,
         publicClient,
-        chainId: chain.id,
       });
 
     case "voucher":
       return handleVoucher({
         credential,
-        expectedPayee,
         amountPerRequest,
         escrow,
         chainId: chain.id,
@@ -95,13 +86,11 @@ export async function verifySession(options: VerifySessionOptions): Promise<Sess
         credential,
         escrow,
         publicClient,
-        chainId: chain.id,
       });
 
     case "close":
       return handleClose({
         credential,
-        expectedPayee,
         escrow,
         publicClient,
         walletClient: options.walletClient,
@@ -120,21 +109,18 @@ async function handleOpen(options: {
   expectedPayee: Address;
   escrow: Address;
   publicClient: PublicClient;
-  chainId: number;
 }): Promise<SessionReceipt> {
-  const { credential, expectedPayee, escrow, publicClient, chainId } = options;
+  const { credential, expectedPayee, escrow, publicClient } = options;
 
   if (!credential.txHash) {
     throw new Error("Open action requires txHash");
   }
 
-  // Verify the open transaction
   const receipt = await publicClient.getTransactionReceipt({ hash: credential.txHash });
   if (receipt.status !== "success") {
     throw new Error("Channel open transaction failed");
   }
 
-  // Read channel state from contract
   const channel = (await publicClient.readContract({
     address: escrow,
     abi: ArcStreamChannelAbi,
@@ -158,14 +144,13 @@ async function handleOpen(options: {
     throw new Error("Channel payee does not match expected payee");
   }
 
-  // Cache channel state
   channelStore.set(credential.channelId!, {
     channelId: credential.channelId as Hex,
     payer: channel.payer,
     payee: channel.payee,
     deposit: channel.deposit,
     settled: channel.settled,
-    lastNonce: 0,
+    lastNonce: 0n,
     lastCumulativeAmount: 0n,
     pendingAmount: 0n,
   });
@@ -182,7 +167,6 @@ async function handleOpen(options: {
 
 async function handleVoucher(options: {
   credential: SessionCredentialPayload;
-  expectedPayee: Address;
   amountPerRequest: bigint;
   escrow: Address;
   chainId: number;
@@ -192,7 +176,6 @@ async function handleVoucher(options: {
 }): Promise<SessionReceipt> {
   const {
     credential,
-    expectedPayee,
     amountPerRequest,
     escrow,
     chainId,
@@ -203,7 +186,7 @@ async function handleVoucher(options: {
 
   const channelId = credential.channelId as Hex;
   const cumulativeAmount = BigInt(credential.cumulativeAmount!);
-  const nonce = parseInt(credential.nonce!);
+  const nonce = BigInt(credential.nonce!); // H5 FIX: BigInt instead of parseInt
   const signature = credential.signature as Hex;
 
   const state = channelStore.get(channelId);
@@ -211,30 +194,23 @@ async function handleVoucher(options: {
     throw new Error("Channel not found — did you open it first?");
   }
 
-  // Verify nonce is increasing
   if (nonce <= state.lastNonce) {
     throw new Error(`Nonce ${nonce} is not greater than last nonce ${state.lastNonce}`);
   }
 
-  // Verify cumulative amount is non-decreasing
   if (cumulativeAmount < state.lastCumulativeAmount) {
     throw new Error("Cumulative amount cannot decrease");
   }
 
-  // Verify delta matches expected amount per request
   const delta = cumulativeAmount - state.lastCumulativeAmount;
   if (delta < amountPerRequest) {
-    throw new Error(
-      `Payment delta ${delta} is less than required ${amountPerRequest}`
-    );
+    throw new Error(`Payment delta ${delta} is less than required ${amountPerRequest}`);
   }
 
-  // Verify cumulative doesn't exceed deposit
   if (cumulativeAmount > state.deposit) {
     throw new Error("Cumulative amount exceeds channel deposit");
   }
 
-  // Verify voucher signature (CPU-only — no RPC)
   const valid = await verifyTypedData({
     address: state.payer,
     domain: {
@@ -247,7 +223,7 @@ async function handleVoucher(options: {
     message: {
       channelId,
       cumulativeAmount,
-      nonce: BigInt(nonce),
+      nonce,
     },
     signature,
   });
@@ -256,12 +232,10 @@ async function handleVoucher(options: {
     throw new Error("Invalid voucher signature");
   }
 
-  // Update state
   state.lastNonce = nonce;
   state.lastCumulativeAmount = cumulativeAmount;
   state.pendingAmount += delta;
 
-  // Auto-settle if threshold exceeded
   if (autoSettleThreshold && state.pendingAmount >= autoSettleThreshold && walletClient) {
     await settleOnChain({
       walletClient,
@@ -291,9 +265,8 @@ async function handleTopUp(options: {
   credential: SessionCredentialPayload;
   escrow: Address;
   publicClient: PublicClient;
-  chainId: number;
 }): Promise<SessionReceipt> {
-  const { credential, escrow, publicClient, chainId } = options;
+  const { credential, escrow, publicClient } = options;
   const channelId = credential.channelId as Hex;
 
   if (!credential.topUpTxHash) {
@@ -307,7 +280,6 @@ async function handleTopUp(options: {
     throw new Error("TopUp transaction failed");
   }
 
-  // Refresh channel state from chain
   const channel = (await publicClient.readContract({
     address: escrow,
     abi: ArcStreamChannelAbi,
@@ -330,9 +302,9 @@ async function handleTopUp(options: {
   };
 }
 
+// C4 FIX: Pre-verify voucher signature before calling on-chain close
 async function handleClose(options: {
   credential: SessionCredentialPayload;
-  expectedPayee: Address;
   escrow: Address;
   publicClient: PublicClient;
   walletClient?: WalletClient<Transport, Chain, Account>;
@@ -346,20 +318,38 @@ async function handleClose(options: {
   }
 
   const cumulativeAmount = BigInt(credential.cumulativeAmount!);
-  const nonce = parseInt(credential.nonce!);
+  const nonce = BigInt(credential.nonce!); // H5 FIX
   const signature = credential.signature as Hex;
 
-  // Close channel on-chain
+  // C4 FIX: Verify voucher signature BEFORE spending gas on-chain
+  const state = channelStore.get(channelId);
+  if (state) {
+    const valid = await verifyTypedData({
+      address: state.payer,
+      domain: {
+        ...STREAM_CHANNEL_EIP712_DOMAIN,
+        chainId,
+        verifyingContract: escrow,
+      },
+      types: VOUCHER_TYPES,
+      primaryType: "Voucher",
+      message: { channelId, cumulativeAmount, nonce },
+      signature,
+    });
+    if (!valid) {
+      throw new Error("Invalid voucher signature for close");
+    }
+  }
+
   const txHash = await walletClient.writeContract({
     address: escrow,
     abi: ArcStreamChannelAbi,
     functionName: "close",
-    args: [channelId, cumulativeAmount, BigInt(nonce), signature],
+    args: [channelId, cumulativeAmount, nonce, signature],
   });
 
   await publicClient.waitForTransactionReceipt({ hash: txHash });
 
-  // Remove from cache
   channelStore.delete(channelId);
 
   return {
@@ -380,7 +370,7 @@ async function settleOnChain(options: {
   escrow: Address;
   channelId: Hex;
   cumulativeAmount: bigint;
-  nonce: number;
+  nonce: bigint;
   signature: Hex;
 }): Promise<Hash> {
   const { walletClient, publicClient, escrow, channelId, cumulativeAmount, nonce, signature } =
@@ -390,23 +380,17 @@ async function settleOnChain(options: {
     address: escrow,
     abi: ArcStreamChannelAbi,
     functionName: "settle",
-    args: [channelId, cumulativeAmount, BigInt(nonce), signature],
+    args: [channelId, cumulativeAmount, nonce, signature],
   });
 
   await publicClient.waitForTransactionReceipt({ hash: txHash });
   return txHash;
 }
 
-/**
- * Get cached server channel state.
- */
 export function getServerChannelState(channelId: Hex): ServerChannelState | undefined {
   return channelStore.get(channelId);
 }
 
-/**
- * Reset session store (for testing).
- */
 export function resetSessionStore(): void {
   channelStore.clear();
 }

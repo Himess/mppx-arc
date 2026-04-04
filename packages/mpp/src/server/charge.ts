@@ -10,8 +10,9 @@ import {
   createPublicClient,
   http,
   verifyTypedData,
-  decodeAbiParameters,
   hexToBigInt,
+  getAddress,
+  parseSignature,
 } from "viem";
 import {
   ARC_USDC,
@@ -22,26 +23,56 @@ import {
 import { Erc20Abi } from "../abi.js";
 import type { ChargeCredentialPayload, ChargeReceipt, ArcChargeConfig } from "../types.js";
 
-// Simple in-memory store for replay protection
-const usedTxHashes = new Set<string>();
-const usedNonces = new Set<string>();
+// C5/C6 FIX: Use a bounded LRU-style store with TTL
+const MAX_STORE_SIZE = 100_000;
+const STORE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+interface StoreEntry {
+  timestamp: number;
+}
+
+const usedTxHashes = new Map<string, StoreEntry>();
+const usedNonces = new Map<string, StoreEntry>();
+
+function storeAdd(store: Map<string, StoreEntry>, key: string): void {
+  // Evict expired entries when store is getting large
+  if (store.size >= MAX_STORE_SIZE) {
+    const now = Date.now();
+    for (const [k, v] of store) {
+      if (now - v.timestamp > STORE_TTL_MS) store.delete(k);
+    }
+    // If still too large, evict oldest 10%
+    if (store.size >= MAX_STORE_SIZE) {
+      const toDelete = Math.floor(store.size * 0.1);
+      let count = 0;
+      for (const k of store.keys()) {
+        if (count++ >= toDelete) break;
+        store.delete(k);
+      }
+    }
+  }
+  store.set(key, { timestamp: Date.now() });
+}
+
+function storeHas(store: Map<string, StoreEntry>, key: string): boolean {
+  const entry = store.get(key);
+  if (!entry) return false;
+  if (Date.now() - entry.timestamp > STORE_TTL_MS) {
+    store.delete(key);
+    return false;
+  }
+  return true;
+}
 
 export interface VerifyChargeOptions {
   credential: ChargeCredentialPayload;
   expectedRecipient: Address;
   expectedAmount: bigint;
   publicClient?: PublicClient;
-  /** Wallet client for broadcasting pull-mode transfers (server pays gas) */
   walletClient?: WalletClient<Transport, Chain, Account>;
   config?: ArcChargeConfig;
 }
 
-/**
- * Verify a charge payment credential on Arc.
- *
- * Push mode: verifies the tx hash on-chain (transfer happened, correct recipient/amount).
- * Pull mode: verifies ERC-3009 signature, broadcasts transferWithAuthorization (server pays gas).
- */
 export async function verifyCharge(options: VerifyChargeOptions): Promise<ChargeReceipt> {
   const { credential, expectedRecipient, expectedAmount, config } = options;
 
@@ -91,8 +122,7 @@ async function verifyPushCharge(options: {
 }): Promise<ChargeReceipt> {
   const { publicClient, txHash, expectedRecipient, expectedAmount, currency, chainId } = options;
 
-  // Replay protection
-  if (usedTxHashes.has(txHash)) {
+  if (storeHas(usedTxHashes, txHash)) {
     throw new Error(`Transaction ${txHash} already used for payment`);
   }
 
@@ -101,16 +131,15 @@ async function verifyPushCharge(options: {
     throw new Error(`Transaction ${txHash} failed`);
   }
 
-  // Verify it's a transfer to the expected recipient with expected amount
-  // Look for Transfer(address,address,uint256) event
+  // H7 FIX: Properly decode topic address instead of includes()
   const transferTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-  const transferLog = receipt.logs.find(
-    (log) =>
-      log.address.toLowerCase() === currency.toLowerCase() &&
-      log.topics[0] === transferTopic &&
-      log.topics[2] &&
-      log.topics[2].toLowerCase().includes(expectedRecipient.slice(2).toLowerCase())
-  );
+  const transferLog = receipt.logs.find((log) => {
+    if (log.address.toLowerCase() !== currency.toLowerCase()) return false;
+    if (log.topics[0] !== transferTopic) return false;
+    if (!log.topics[2]) return false;
+    const toAddress = getAddress("0x" + log.topics[2].slice(26));
+    return toAddress.toLowerCase() === expectedRecipient.toLowerCase();
+  });
 
   if (!transferLog) {
     throw new Error("No USDC transfer to expected recipient found in transaction");
@@ -118,12 +147,10 @@ async function verifyPushCharge(options: {
 
   const transferAmount = hexToBigInt(transferLog.data as Hex);
   if (transferAmount < expectedAmount) {
-    throw new Error(
-      `Transfer amount ${transferAmount} is less than expected ${expectedAmount}`
-    );
+    throw new Error(`Transfer amount ${transferAmount} is less than expected ${expectedAmount}`);
   }
 
-  usedTxHashes.add(txHash);
+  storeAdd(usedTxHashes, txHash);
 
   return {
     method: "arc",
@@ -159,26 +186,29 @@ async function verifyPullCharge(options: {
     throw new Error("Missing required fields for pull mode credential");
   }
 
-  // Replay protection on nonce
+  // M11 FIX: Check expiry before doing anything
+  const now = Math.floor(Date.now() / 1000);
+  if (BigInt(validBefore) <= BigInt(now)) {
+    throw new Error("Authorization has expired (validBefore is in the past)");
+  }
+
   const nonceKey = `${from}:${nonce}`;
-  if (usedNonces.has(nonceKey)) {
+  if (storeHas(usedNonces, nonceKey)) {
     throw new Error("Authorization nonce already used");
   }
 
-  // Check if nonce is already used on-chain
   const isUsed = await publicClient.readContract({
     address: currency,
     abi: Erc20Abi,
     functionName: "authorizationState",
-    args: [from, nonce as Hex],
+    args: [from as Address, nonce as Hex],
   });
   if (isUsed) {
     throw new Error("Authorization nonce already used on-chain");
   }
 
-  // Verify ERC-3009 signature
   const valid = await verifyTypedData({
-    address: from,
+    address: from as Address,
     domain: {
       ...USDC_EIP712_DOMAIN,
       chainId,
@@ -187,7 +217,7 @@ async function verifyPullCharge(options: {
     types: TRANSFER_WITH_AUTHORIZATION_TYPES,
     primaryType: "TransferWithAuthorization",
     message: {
-      from,
+      from: from as Address,
       to: expectedRecipient,
       value: expectedAmount,
       validAfter: BigInt(validAfter),
@@ -201,33 +231,29 @@ async function verifyPullCharge(options: {
     throw new Error("Invalid ERC-3009 authorization signature");
   }
 
-  // Decode signature components for transferWithAuthorization
-  const sigBytes = signature as Hex;
-  const r = `0x${sigBytes.slice(2, 66)}` as Hex;
-  const s = `0x${sigBytes.slice(66, 130)}` as Hex;
-  const v = parseInt(sigBytes.slice(130, 132), 16);
+  // C3 FIX: Use parseSignature instead of manual slicing
+  const parsed = parseSignature(signature as Hex);
 
-  // Broadcast transferWithAuthorization (server pays gas)
   const txHash = await walletClient.writeContract({
     address: currency,
     abi: Erc20Abi,
     functionName: "transferWithAuthorization",
     args: [
-      from,
+      from as Address,
       expectedRecipient,
       expectedAmount,
       BigInt(validAfter),
       BigInt(validBefore),
       nonce as Hex,
-      v,
-      r,
-      s,
+      Number(parsed.v),
+      parsed.r,
+      parsed.s,
     ],
   });
 
   await publicClient.waitForTransactionReceipt({ hash: txHash });
 
-  usedNonces.add(nonceKey);
+  storeAdd(usedNonces, nonceKey);
 
   return {
     method: "arc",
@@ -239,9 +265,6 @@ async function verifyPullCharge(options: {
   };
 }
 
-/**
- * Reset replay protection stores (for testing).
- */
 export function resetChargeStore(): void {
   usedTxHashes.clear();
   usedNonces.clear();

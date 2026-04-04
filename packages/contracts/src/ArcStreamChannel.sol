@@ -174,7 +174,7 @@ contract ArcStreamChannel is EIP712, ReentrancyGuard {
     }
 
     /// @notice Payer requests channel close. After grace period, payer can withdraw.
-    function requestClose(bytes32 channelId) external {
+    function requestClose(bytes32 channelId) external nonReentrant {
         Channel storage ch = _getActiveChannel(channelId);
         if (msg.sender != ch.payer) revert OnlyPayer();
 

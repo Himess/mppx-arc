@@ -75,9 +75,9 @@ export async function createSessionCredential(
   const key = channelKey(challenge.payee, currency, escrow);
   let entry = channelCache.get(key);
 
-  // If no channel exists, open one
+  // M1 FIX: If no channel exists, open one and return "open" action
   if (!entry) {
-    entry = await openChannel({
+    const opened = await openChannel({
       publicClient,
       walletClient,
       escrow,
@@ -86,7 +86,13 @@ export async function createSessionCredential(
       deposit: minDeposit,
       onChannelOpened,
     });
-    channelCache.set(key, entry);
+    channelCache.set(key, opened.entry);
+
+    return {
+      action: "open" as const,
+      channelId: opened.entry.channelId,
+      txHash: opened.txHash,
+    };
   }
 
   // Sign a cumulative voucher
@@ -125,7 +131,7 @@ async function openChannel(options: {
   payee: Address;
   deposit: bigint;
   onChannelOpened?: (channelId: Hex, txHash: Hex) => void;
-}): Promise<ChannelEntry> {
+}): Promise<{ entry: ChannelEntry; txHash: Hex }> {
   const { publicClient, walletClient, escrow, currency, payee, deposit, onChannelOpened } = options;
   const account = walletClient.account;
 
@@ -176,10 +182,13 @@ async function openChannel(options: {
   onChannelOpened?.(channelId, txHash);
 
   return {
-    channelId,
-    salt,
-    cumulativeAmount: 0n,
-    nonce: 0,
+    entry: {
+      channelId,
+      salt,
+      cumulativeAmount: 0n,
+      nonce: 0,
+    },
+    txHash,
   };
 }
 

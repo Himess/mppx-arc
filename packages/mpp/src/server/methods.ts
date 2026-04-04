@@ -12,32 +12,21 @@ import {
   http,
   verifyTypedData,
   hexToBigInt,
+  getAddress,
+  parseSignature,
 } from "viem";
 import { charge, session } from "../methods.js";
 import {
   ARC_USDC,
   arcTestnet,
-  ARC_STREAM_CHANNEL,
   USDC_EIP712_DOMAIN,
   TRANSFER_WITH_AUTHORIZATION_TYPES,
   STREAM_CHANNEL_EIP712_DOMAIN,
   VOUCHER_TYPES,
 } from "../constants.js";
 import { ArcStreamChannelAbi, Erc20Abi } from "../abi.js";
-
-// ─── Server Channel State ────────────────────────────────────────────
-
-interface ServerChannelState {
-  payer: Address;
-  payee: Address;
-  deposit: bigint;
-  settled: bigint;
-  lastNonce: number;
-  lastCumulativeAmount: bigint;
-  pendingAmount: bigint;
-}
-
-const channelStore = new Map<string, ServerChannelState>();
+// H6 FIX: Import shared channel store instead of creating a duplicate
+import { channelStore } from "./session.js";
 
 // ─── Arc Charge Server ───────────────────────────────────────────────
 
@@ -71,21 +60,22 @@ export function arcCharge(options: {
       if (payload.mode === "push") {
         const txHash = payload.txHash as Hash;
 
-        // Replay protection via Store
         const used = await store.get(`tx:${txHash}`);
         if (used) throw new Error(`Transaction ${txHash} already used`);
 
         const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
         if (receipt.status !== "success") throw new Error("Transaction failed");
 
+        // H7 FIX: Properly decode topic address
         const transferTopic =
           "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-        const transferLog = receipt.logs.find(
-          (log) =>
-            log.address.toLowerCase() === currency.toLowerCase() &&
-            log.topics[0] === transferTopic &&
-            log.topics[2]?.toLowerCase().includes(expectedRecipient.slice(2).toLowerCase())
-        );
+        const transferLog = receipt.logs.find((log) => {
+          if (log.address.toLowerCase() !== currency.toLowerCase()) return false;
+          if (log.topics[0] !== transferTopic) return false;
+          if (!log.topics[2]) return false;
+          const toAddress = getAddress("0x" + log.topics[2].slice(26));
+          return toAddress.toLowerCase() === expectedRecipient.toLowerCase();
+        });
 
         if (!transferLog) throw new Error("No USDC transfer to recipient found");
 
@@ -103,10 +93,16 @@ export function arcCharge(options: {
         });
       }
 
-      // Pull mode: ERC-3009
+      // Pull mode
       const { signature, from, nonce, validAfter, validBefore } = payload;
       if (!signature || !from || !nonce || !validAfter || !validBefore)
         throw new Error("Missing pull mode fields");
+
+      // M11 FIX: Check expiry
+      const now = Math.floor(Date.now() / 1000);
+      if (BigInt(validBefore) <= BigInt(now)) {
+        throw new Error("Authorization has expired");
+      }
 
       const nonceKey = `nonce:${from}:${nonce}`;
       const usedNonce = await store.get(nonceKey);
@@ -137,14 +133,11 @@ export function arcCharge(options: {
       });
       if (!valid) throw new Error("Invalid ERC-3009 signature");
 
-      // Broadcast transfer (server pays gas)
       if (!options.walletClient)
         throw new Error("Pull mode requires walletClient");
 
-      const sigHex = signature as Hex;
-      const r = `0x${sigHex.slice(2, 66)}` as Hex;
-      const s = `0x${sigHex.slice(66, 130)}` as Hex;
-      const v = parseInt(sigHex.slice(130, 132), 16);
+      // C3 FIX: Use parseSignature
+      const parsed = parseSignature(signature as Hex);
 
       const txHash = await options.walletClient.writeContract({
         address: currency,
@@ -157,9 +150,9 @@ export function arcCharge(options: {
           BigInt(validAfter),
           BigInt(validBefore),
           nonce as Hex,
-          v,
-          r,
-          s,
+          Number(parsed.v),
+          parsed.r,
+          parsed.s,
         ],
       });
 
@@ -224,18 +217,25 @@ export function arcSession(options: {
             abi: ArcStreamChannelAbi,
             functionName: "getChannel",
             args: [channelId],
-          })) as any;
+          })) as {
+            payer: Address;
+            payee: Address;
+            deposit: bigint;
+            settled: bigint;
+            openedAt: bigint;
+          };
 
           if (channel.openedAt === 0n) throw new Error("Channel does not exist");
           if (channel.payee.toLowerCase() !== expectedPayee.toLowerCase())
             throw new Error("Payee mismatch");
 
           channelStore.set(channelId, {
+            channelId,
             payer: channel.payer,
             payee: channel.payee,
             deposit: channel.deposit,
             settled: channel.settled,
-            lastNonce: 0,
+            lastNonce: 0n,
             lastCumulativeAmount: 0n,
             pendingAmount: 0n,
           });
@@ -251,7 +251,7 @@ export function arcSession(options: {
         case "voucher": {
           const channelId = payload.channelId as Hex;
           const cumulativeAmount = BigInt(payload.cumulativeAmount!);
-          const nonce = parseInt(payload.nonce!);
+          const nonce = BigInt(payload.nonce!); // H5 FIX
           const signature = payload.signature as Hex;
 
           const state = channelStore.get(channelId);
@@ -271,7 +271,7 @@ export function arcSession(options: {
             domain: { ...STREAM_CHANNEL_EIP712_DOMAIN, chainId, verifyingContract: escrow },
             types: VOUCHER_TYPES,
             primaryType: "Voucher",
-            message: { channelId, cumulativeAmount, nonce: BigInt(nonce) },
+            message: { channelId, cumulativeAmount, nonce },
             signature,
           });
           if (!valid) throw new Error("Invalid voucher signature");
@@ -280,7 +280,6 @@ export function arcSession(options: {
           state.lastCumulativeAmount = cumulativeAmount;
           state.pendingAmount += delta;
 
-          // Auto-settle
           if (
             options.autoSettleThreshold &&
             state.pendingAmount >= options.autoSettleThreshold &&
@@ -290,7 +289,7 @@ export function arcSession(options: {
               address: escrow,
               abi: ArcStreamChannelAbi,
               functionName: "settle",
-              args: [channelId, cumulativeAmount, BigInt(nonce), signature],
+              args: [channelId, cumulativeAmount, nonce, signature],
             });
             await publicClient.waitForTransactionReceipt({ hash: settleTx });
             state.settled = cumulativeAmount;
@@ -318,7 +317,7 @@ export function arcSession(options: {
             abi: ArcStreamChannelAbi,
             functionName: "getChannel",
             args: [channelId],
-          })) as any;
+          })) as { deposit: bigint };
 
           const state = channelStore.get(channelId);
           if (state) state.deposit = channel.deposit;
@@ -335,13 +334,28 @@ export function arcSession(options: {
           if (!options.walletClient) throw new Error("Close requires walletClient");
           const channelId = payload.channelId as Hex;
           const cumulativeAmount = BigInt(payload.cumulativeAmount!);
-          const nonce = parseInt(payload.nonce!);
+          const nonce = BigInt(payload.nonce!); // H5 FIX
+          const signature = payload.signature as Hex;
+
+          // C4 FIX: Pre-verify voucher before spending gas
+          const state = channelStore.get(channelId);
+          if (state) {
+            const valid = await verifyTypedData({
+              address: state.payer,
+              domain: { ...STREAM_CHANNEL_EIP712_DOMAIN, chainId, verifyingContract: escrow },
+              types: VOUCHER_TYPES,
+              primaryType: "Voucher",
+              message: { channelId, cumulativeAmount, nonce },
+              signature,
+            });
+            if (!valid) throw new Error("Invalid voucher signature for close");
+          }
 
           const txHash = await options.walletClient.writeContract({
             address: escrow,
             abi: ArcStreamChannelAbi,
             functionName: "close",
-            args: [channelId, cumulativeAmount, BigInt(nonce), payload.signature as Hex],
+            args: [channelId, cumulativeAmount, nonce, signature],
           });
           await publicClient.waitForTransactionReceipt({ hash: txHash });
           channelStore.delete(channelId);
@@ -359,7 +373,6 @@ export function arcSession(options: {
       }
     },
 
-    // Session management responses (open/close/topUp return 204)
     respond({ credential, receipt }) {
       const action = credential.payload.action;
       if (action === "open" || action === "close" || action === "topUp") {

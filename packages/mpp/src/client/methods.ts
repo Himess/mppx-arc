@@ -5,6 +5,8 @@ import {
   type Transport,
   type WalletClient,
   type PublicClient,
+  type Address,
+  type Hex,
   createPublicClient,
   http,
   keccak256,
@@ -20,7 +22,6 @@ import {
   VOUCHER_TYPES,
 } from "../constants.js";
 import { ArcStreamChannelAbi, Erc20Abi } from "../abi.js";
-import type { Address, Hex } from "viem";
 
 // ─── Client Context Schema ──────────────────────────────────────────
 
@@ -65,12 +66,21 @@ export function arcCharge() {
         const pc = (context.publicClient ??
           createPublicClient({ chain: arcTestnet, transport: http() })) as PublicClient;
 
-        const transferTxHash = await walletClient.sendTransaction({
-          to: currency,
-          data: encodePacked(
-            ["bytes4", "address", "uint256"],
-            ["0xa9059cbb", recipient, amount]
-          ),
+        // C1/C2 FIX: Use writeContract with proper ABI encoding
+        const transferTxHash = await walletClient.writeContract({
+          address: currency,
+          abi: [{
+            type: "function",
+            name: "transfer",
+            inputs: [
+              { name: "to", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+            outputs: [{ type: "bool" }],
+            stateMutability: "nonpayable",
+          }] as const,
+          functionName: "transfer",
+          args: [recipient, amount],
         });
         await pc.waitForTransactionReceipt({ hash: transferTxHash });
 

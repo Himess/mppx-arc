@@ -8,9 +8,9 @@ import {
   type WalletClient,
   createPublicClient,
   http,
-  parseUnits,
-  encodePacked,
   keccak256,
+  encodePacked,
+  encodeFunctionData,
 } from "viem";
 import {
   ARC_USDC,
@@ -55,7 +55,6 @@ export async function createChargeCredential(
   const chain = arcTestnet;
   const currency = challenge.currency || ARC_USDC;
   const amount = BigInt(challenge.amount);
-  const account = walletClient.account;
 
   const publicClient =
     options.publicClient ??
@@ -83,6 +82,7 @@ export async function createChargeCredential(
   });
 }
 
+// C1+C2 FIX: Use writeContract with proper ABI encoding, remove unnecessary approve
 async function createPushCredential(options: {
   publicClient: PublicClient;
   walletClient: WalletClient<Transport, Chain, Account>;
@@ -92,25 +92,23 @@ async function createPushCredential(options: {
 }): Promise<ChargeCredentialPayload> {
   const { publicClient, walletClient, currency, recipient, amount } = options;
 
-  const txHash = await walletClient.writeContract({
+  // Direct ERC-20 transfer via writeContract (proper ABI encoding)
+  const transferTxHash = await walletClient.writeContract({
     address: currency,
-    abi: Erc20Abi,
-    functionName: "approve",
+    abi: [
+      {
+        type: "function",
+        name: "transfer",
+        inputs: [
+          { name: "to", type: "address" },
+          { name: "amount", type: "uint256" },
+        ],
+        outputs: [{ type: "bool" }],
+        stateMutability: "nonpayable",
+      },
+    ] as const,
+    functionName: "transfer",
     args: [recipient, amount],
-  });
-
-  // For push mode, we directly transfer
-  // Using a simple ERC-20 transfer
-  const transferTxHash = await walletClient.sendTransaction({
-    to: currency,
-    data: encodePacked(
-      ["bytes4", "address", "uint256"],
-      [
-        "0xa9059cbb", // transfer(address,uint256)
-        recipient,
-        amount,
-      ]
-    ),
   });
 
   await publicClient.waitForTransactionReceipt({ hash: transferTxHash });
@@ -131,7 +129,6 @@ async function createPullCredential(options: {
   const { walletClient, currency, recipient, amount, chainId } = options;
   const account = walletClient.account;
 
-  // Generate random nonce for ERC-3009
   const nonceBytes = keccak256(
     encodePacked(
       ["address", "uint256", "uint256"],
@@ -141,7 +138,7 @@ async function createPullCredential(options: {
 
   const now = Math.floor(Date.now() / 1000);
   const validAfter = 0n;
-  const validBefore = BigInt(now + 3600); // 1 hour validity
+  const validBefore = BigInt(now + 3600);
 
   const signature = await walletClient.signTypedData({
     domain: {

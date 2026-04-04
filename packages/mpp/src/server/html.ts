@@ -1,5 +1,15 @@
 import type { Address } from "viem";
 
+// H8 FIX: HTML escape function to prevent XSS
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export interface PaymentPageOptions {
   /** Server/merchant name */
   merchantName?: string;
@@ -36,7 +46,7 @@ export function renderPaymentPage(options: PaymentPageOptions): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Payment Required — ${merchantName}</title>
+  <title>Payment Required — ${escapeHtml(merchantName)}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -139,12 +149,12 @@ export function renderPaymentPage(options: PaymentPageOptions): string {
 <body>
   <div class="card">
     <div class="status">402 Payment Required</div>
-    <h1>${merchantName}</h1>
-    <div class="amount">$${displayAmount} <span>USDC</span></div>
+    <h1>${escapeHtml(merchantName)}</h1>
+    <div class="amount">$${escapeHtml(displayAmount)} <span>USDC</span></div>
     <div class="details">
       <div class="detail-row">
         <span class="detail-label">Network</span>
-        <span class="detail-value">${chainName}</span>
+        <span class="detail-value">${escapeHtml(chainName)}</span>
       </div>
       <div class="detail-row">
         <span class="detail-label">Payment Type</span>
@@ -153,7 +163,7 @@ export function renderPaymentPage(options: PaymentPageOptions): string {
       <div class="detail-row">
         <span class="detail-label">Recipient</span>
         <span class="detail-value">
-          <a href="${explorerUrl}" target="_blank" rel="noopener">
+          <a href="${escapeHtml(explorerUrl)}" target="_blank" rel="noopener">
             ${recipient.slice(0, 6)}...${recipient.slice(-4)}
           </a>
         </span>

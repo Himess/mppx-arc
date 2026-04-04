@@ -278,6 +278,29 @@ contract ArcStreamChannelTest is Test {
         assertEq(usdc.balanceOf(address(channel)), 0);
     }
 
+    function test_payee_canSettleAfterRequestClose() public {
+        bytes32 channelId = _openChannel(100e6);
+
+        // Payer requests close
+        vm.prank(payer);
+        channel.requestClose(channelId);
+
+        // Payee can still settle during grace period
+        bytes memory sig = _signVoucher(payerKey, channelId, 60e6, 1);
+        vm.prank(payee);
+        channel.settle(channelId, 60e6, 1, sig);
+
+        assertEq(usdc.balanceOf(payee), 60e6);
+
+        // Payee can also close during grace period
+        bytes memory closeSig = _signVoucher(payerKey, channelId, 80e6, 2);
+        vm.prank(payee);
+        channel.close(channelId, 80e6, 2, closeSig);
+
+        assertEq(usdc.balanceOf(payee), 80e6);
+        assertEq(usdc.balanceOf(payer), 1_000_000e6 - 100e6 + 20e6);
+    }
+
     function test_close_revertsNonPayee() public {
         bytes32 channelId = _openChannel(100e6);
         bytes memory sig = _signVoucher(payerKey, channelId, 50e6, 1);

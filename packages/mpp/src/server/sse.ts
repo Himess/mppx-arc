@@ -120,16 +120,15 @@ export function createSSEStream(options: {
           return;
         }
 
-        // Stream tokens
+        // L6 FIX: Check budget BEFORE incrementing to avoid off-by-one
         const gen = generate();
         for await (const token of gen) {
-          tokenCount++;
-          if (tokenCount > maxTokens) {
+          if (tokenCount >= maxTokens) {
             controller.enqueue(
               encoder.encode(
                 `event: payment_required\ndata: ${JSON.stringify({
-                  tokensUsed: tokenCount - 1,
-                  amountCharged: ((BigInt(tokenCount - 1) * amountPerToken)).toString(),
+                  tokensUsed: tokenCount,
+                  amountCharged: (BigInt(tokenCount) * amountPerToken).toString(),
                   message: "Voucher budget exhausted. Send a new voucher to continue.",
                 })}\n\n`
               )
@@ -137,12 +136,13 @@ export function createSSEStream(options: {
             break;
           }
 
+          tokenCount++;
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify({ token, index: tokenCount })}\n\n`)
           );
         }
 
-        // Final event
+        // Final event — charge only for tokens actually delivered
         const totalCharged = BigInt(tokenCount) * amountPerToken;
         controller.enqueue(
           encoder.encode(

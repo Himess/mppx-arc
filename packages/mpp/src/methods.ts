@@ -1,29 +1,12 @@
-import { Method, Credential, Receipt, Store, z } from "mppx";
-import {
-  type Address,
-  type Hex,
-  type Hash,
-  createPublicClient,
-  createWalletClient,
-  http,
-  verifyTypedData,
-  hexToBigInt,
-  keccak256,
-  encodePacked,
-} from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import {
-  ARC_USDC,
-  arcTestnet,
-  USDC_EIP712_DOMAIN,
-  TRANSFER_WITH_AUTHORIZATION_TYPES,
-  STREAM_CHANNEL_EIP712_DOMAIN,
-  VOUCHER_TYPES,
-  ARC_STREAM_CHANNEL,
-} from "./constants.js";
-import { ArcStreamChannelAbi, Erc20Abi } from "./abi.js";
+import { Method, z } from "mppx";
 
-// ─── Method Definitions (Method.from) ────────────────────────────────
+// M3 FIX: Stricter Zod schemas with hex/address validation
+const hexString = z.string().check(
+  z.regex(/^0x[a-fA-F0-9]*$/),
+);
+const addressString = z.string().check(
+  z.regex(/^0x[a-fA-F0-9]{40}$/),
+);
 
 /**
  * Arc charge method — one-time USDC payment via ERC-3009 or direct transfer.
