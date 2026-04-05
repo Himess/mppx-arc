@@ -8,13 +8,15 @@ MPP (Machine Payments Protocol) payment method for Circle's Arc chain. USDC-nati
 
 Arc already supports [x402](https://x402.org) for machine payments. MPP complements it — they solve different problems:
 
-| | x402 | MPP |
+| | x402 (V2) | MPP |
 |---|---|---|
-| Best for | Simple one-time payments | High-frequency agent workflows |
-| Payment model | Per-request on-chain tx | Session channels (1 tx → 100s of requests) |
+| Best for | Simple per-request payments | High-frequency agent workflows |
+| Payment model | Per-request on-chain tx | Session channels (1 tx → 100s of off-chain requests) |
+| Sessions | Wallet-based identity (re-access paid resources) | Payment channels with off-chain vouchers |
 | Streaming | No | SSE pay-per-token |
-| HTTP standard | Custom headers | RFC-compliant `WWW-Authenticate` / `Authorization` |
-| Standards body | None | IETF Internet-Draft |
+| Verification | Facilitator server required | No facilitator (server verifies via ecrecover) |
+| SDK | Plugin-based, multi-chain | Plugin-based (mppx), multi-chain |
+| Standards body | Open spec | IETF Internet-Draft |
 | Backed by | Coinbase | Stripe, Tempo, Paradigm |
 
 Both use USDC. Both use HTTP 402. Supporting both means more agents can pay for your services.
