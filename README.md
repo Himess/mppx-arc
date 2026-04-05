@@ -42,6 +42,7 @@ Both use USDC. Both use HTTP 402. Both are actively evolving — features listed
 
 ## Demo
 
+- **Video:** [youtube.com/watch?v=p3eIyVwSyNo](https://www.youtube.com/watch?v=p3eIyVwSyNo)
 - **Live Demo:** [mppx-arc-demo.vercel.app](https://mppx-arc-demo.vercel.app) (connect MetaMask to Arc Testnet, get USDC from [faucet.circle.com](https://faucet.circle.com))
 - **Slides:** [mppx-arc-slides.vercel.app](https://mppx-arc-slides.vercel.app)
 
