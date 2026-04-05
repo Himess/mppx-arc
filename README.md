@@ -1,6 +1,6 @@
 # mppx-arc
 
-MPP (Machine Payments Protocol) payment method for Circle's Arc chain. USDC-native charge + session support.
+MPP (Machine Payments Protocol) payment method for Arc chain. USDC-native charge + session support.
 
 > **Note:** This is an experimental integration. Both x402 and MPP are actively evolving protocols — features, capabilities, and architecture can change rapidly. What's described here reflects the state of both protocols at the time of writing. MPP may or may not become officially supported on Arc — this project demonstrates that it's technically feasible and the code is fully open source.
 
