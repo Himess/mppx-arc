@@ -195,24 +195,6 @@ cd packages/mpp && npm test
 
 **110 total tests, 0 failures.**
 
-## Comparison with Other MPP Integrations
-
-| Feature | mppx-arc | Monad | Abstract | Avalanche |
-|---------|----------|-------|----------|-----------|
-| mppx plugin interface | Yes | Yes | Yes | No |
-| TypeScript tests | 78 | 36 | 0 | 0 |
-| Foundry tests | 32 (incl. fuzz) | 0 | 17 | 22 |
-| Charge (push + pull) | Yes | Yes | Pull only | N/A |
-| Session channels | Yes | No | Yes | Yes |
-| SSE streaming | Yes | No | No | No |
-| HTML payment page | Yes | No | No | No |
-| Replay protection | Store-based (TTL) | Store-based | No | No |
-| Auto-settle batching | Yes | No | No | Yes |
-| ERC-1271 wallets | Yes | No | Yes | No |
-| IETF-style spec | Yes | Yes | No | No |
-| Architecture doc | Yes | Yes | No | No |
-| USDC-native chain | Yes | No | No | No |
-
 ## Arc Chain Details
 
 | Property | Value |
