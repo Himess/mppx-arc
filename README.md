@@ -15,7 +15,7 @@ Arc already supports [x402](https://x402.org) for machine payments. MPP compleme
 | Streaming | No | SSE pay-per-token |
 | HTTP standard | Custom headers | RFC-compliant `WWW-Authenticate` / `Authorization` |
 | Standards body | None | IETF Internet-Draft |
-| Backed by | Coinbase, Circle | Stripe, Tempo, Paradigm |
+| Backed by | Coinbase | Stripe, Tempo, Paradigm |
 
 Both use USDC. Both work on Arc. Supporting both means more agents can pay for your services.
 
