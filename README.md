@@ -1,8 +1,8 @@
 # mppx-arc
 
-MPP (Machine Payments Protocol) payment method for Circle's Arc chain.
+MPP (Machine Payments Protocol) payment method for Circle's Arc chain. USDC-native charge + session support.
 
-USDC-native charge + session support. The first MPP integration on Arc.
+> **Note:** This is an experimental integration. Both x402 and MPP are actively evolving protocols. MPP may or may not become officially supported on Arc — this project demonstrates that it's technically feasible and the code is fully open source.
 
 ## Why MPP on Arc?
 
@@ -17,7 +17,13 @@ Arc already supports [x402](https://x402.org) for machine payments. MPP compleme
 | Standards body | None | IETF Internet-Draft |
 | Backed by | Coinbase | Stripe, Tempo, Paradigm |
 
-Both use USDC. Both work on Arc. Supporting both means more agents can pay for your services.
+Both use USDC. Both use HTTP 402. Supporting both means more agents can pay for your services.
+
+### When does MPP matter?
+
+- **AI agent making 500 API calls/minute** — x402: 500 on-chain tx. MPP: 1 tx + 499 off-chain vouchers.
+- **LLM service charging per token** — Pay $0.0001 per word as it streams. x402 can't do per-token billing.
+- **Data feed with continuous polling** — Agent polls every second for an hour. x402: 3,600 tx. MPP: 1 tx + 3,599 vouchers at ~3ms each.
 
 ## What is this?
 
@@ -27,10 +33,15 @@ Both use USDC. Both work on Arc. Supporting both means more agents can pay for y
 
 - **Charge** — One-time USDC payments. Push mode (client broadcasts) or pull mode (client signs ERC-3009, server broadcasts — gasless for client).
 - **Session** — Streaming micropayments via payment channels. Client deposits USDC into escrow, then signs off-chain vouchers for each request. Sub-ms verification, $0.0001 per request possible.
-- **SSE Streaming** — Pay-per-token streaming for LLM responses. Voucher budget gating with automatic cutoff.
+- **SSE Streaming** — Pay-per-token streaming for LLM responses. Real server-side SSE with voucher budget gating.
 - **HTML Payment Page** — Browser-friendly 402 page for non-agent clients.
 
 **USDC only** — no bridged tokens, no extra gas tokens. Arc's native currency.
+
+## Demo
+
+- **Live Demo:** [mppx-arc-demo.vercel.app](https://mppx-arc-demo.vercel.app) (connect MetaMask to Arc Testnet, get USDC from [faucet.circle.com](https://faucet.circle.com))
+- **Slides:** [mppx-arc-slides.vercel.app](https://mppx-arc-slides.vercel.app)
 
 ## Architecture
 
@@ -68,17 +79,16 @@ Agent                                   Server
 
 ## mppx Plugin Interface
 
-This package implements the official mppx plugin API (`Method.from` / `Method.toClient` / `Method.toServer`):
+Implements the official mppx plugin API (`Method.from` / `Method.toClient` / `Method.toServer`):
 
 ```typescript
-import { Mppx } from "mppx/server";
 import { arcChargeServer, arcSessionServer } from "@mppx-arc/mpp";
 
-const mppx = Mppx.create({
-  methods: [
-    arcCharge({ recipient: SERVER_ADDRESS, walletClient }),
-    arcSession({ payee: SERVER_ADDRESS, escrow: ESCROW, amountPerRequest: 10000n }),
-  ],
+const chargeMethod = arcChargeServer({ recipient: SERVER_ADDRESS, walletClient });
+const sessionMethod = arcSessionServer({
+  payee: SERVER_ADDRESS,
+  escrow: ESCROW,
+  amountPerRequest: 10000n,
 });
 ```
 
@@ -122,7 +132,7 @@ app.get("/api/data", async (c) => {
   }
 
   const credential = JSON.parse(
-    Buffer.from(auth.slice(8), "base64url").toString()
+    Buffer.from(auth.slice(8), "base64").toString()
   );
 
   const receipt = await verifyCharge({
